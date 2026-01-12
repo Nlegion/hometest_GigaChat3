@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  llama-server:
+    build: .
+    container_name: llama-server
+    ports:
+      - "8080:8080"
+    environment:
+      - MODEL_PATH=${MODEL_PATH:-data/model/GigaChat3-10B-A1.8B-q6_k.gguf}
+    volumes:
+      - ./data/model:/app/data/model:ro
+    command: >
+      llama-server
+      -m /app/data/model/GigaChat3-10B-A1.8B-q6_k.gguf
+      -np 1
+      -cb
+      -ctk q8_0
+      -ctv q8_0
+      -fa on
+      --n-gpu-layers 999
+      --ctx-size 32768
+      --port 8080
+      --host 0.0.0.0
+      --jinja
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  gigachat3-web:
+    build: .
+    container_name: gigachat3-web
+    ports:
+      - "8000:8000"
+    environment:
+      - LLAMA_SERVER_URL=http://llama-server:8080
+      - USE_LLAMA_SERVER=true
+      - MODEL_NAME=ai-sage/GigaChat3-10B-A1.8B
+      - HOST=0.0.0.0
+      - PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - SYSTEM_PROMPT_TYPE=${SYSTEM_PROMPT_TYPE:-assistant}
+    depends_on:
+      llama-server:
+        condition: service_healthy
+    restart: unless-stopped

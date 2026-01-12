@@ -1,0 +1,91 @@
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.h-100 {
+    height: 100vh;
+}
+
+.chat-area {
+    overflow-y: auto;
+    background-color: #f8f9fa;
+    min-height: 0;
+}
+
+.message {
+    padding: 12px 16px;
+    border-radius: 8px;
+    max-width: 80%;
+    word-wrap: break-word;
+}
+
+.user-message {
+    background-color: #007bff;
+    color: white;
+    margin-left: auto;
+    margin-right: 0;
+}
+
+.user-message .message-role {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.assistant-message {
+    background-color: white;
+    border: 1px solid #dee2e6;
+    margin-left: 0;
+    margin-right: auto;
+}
+
+.assistant-message .message-role {
+    color: #6c757d;
+}
+
+.message-content {
+    white-space: pre-wrap;
+    line-height: 1.5;
+}
+
+.input-area {
+    background-color: white;
+}
+
+.input-area textarea {
+    border-radius: 8px;
+}
+
+.header {
+    background-color: white;
+}
+
+.welcome-message {
+    padding: 40px 20px;
+}
+
+#metrics {
+    margin-top: 20px;
+    padding: 10px;
+    background-color: #e9ecef;
+    border-radius: 4px;
+}
+
+#metrics div {
+    margin-bottom: 4px;
+}
+
+@media (max-width: 768px) {
+    .message {
+        max-width: 90%;
+    }
+    
+    .col-md-3 {
+        border-end: none !important;
+        border-bottom: 1px solid #dee2e6;
+    }
+}

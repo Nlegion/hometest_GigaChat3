@@ -1,0 +1,30 @@
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update && apt-get install -y \
+    python3.12 \
+    python3.12-dev \
+    wget \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt requirements-dev.txt ./
+RUN wget https://bootstrap.pypa.io/get-pip.py && \
+    python3.12 get-pip.py && \
+    rm get-pip.py && \
+    pip3.12 install --no-cache-dir -r requirements-dev.txt
+
+COPY app/ ./app/
+COPY tests/ ./tests/
+COPY static/ ./static/
+COPY templates/ ./templates/
+COPY pyproject.toml ./
+
+CMD ["python3.12", "-m", "pytest", "tests/", "-v"]

@@ -1,0 +1,112 @@
+[tool.poetry]
+package-mode = false
+name = "platform-router"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+preview = true
+select = ["ALL"]
+ignore = [
+    "ANN101",  # Missing type annotation for `self` in method
+    "ANN102",  # Missing type annotation for `cls` in classmethod
+    "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed in `_`
+    "D100",  # Missing docstring in public module
+    "D101",  # Missing docstring in public class
+    "D102",  # Missing docstring in public method
+    "D103",  # Missing docstring in public function
+    "D104",  # Missing docstring in public package
+    "D107",  # Missing docstring in `__init__`
+    "D106",  # Missing docstring in public nested class
+    "D203",  # 1 blank line required before class docstring
+    "D213",  # Multi-line docstring summary should start at the second line
+    "D401",  # First line of docstring should be in imperative mood
+
+    "N999",  # Invalid module name: '2024_07_29_0308-32499b99a59e_initial_migration'
+
+    "S101",    # Use of `assert` detected - allowed for pytest
+    "S311",    # Standard pseudo-random generators are not suitable for cryptographic purposes
+    "SIM117",  # Use a single `with` statement with multiple contexts
+
+    "ARG001", # Unused function argument - allowed for pytest (fixtures)
+
+    "TRY003", # Avoid specifying long messages outside the exception class
+    "TRY400", # Use `logging.exception` instead of `logging.error`
+
+    "EM101", # Exception must not use a string literal, assign to variable first
+    "EM102", # Exception must not use an f-string literal, assign to variable first
+
+    "TD003", # Missing issue link on the line following this _TODO
+    "FIX002", # Line contains _TODO, consider resolving the issue
+
+    "ERA001",  # Found commented-out code - THIS IS BAD!
+
+    "CPY001",  # Missing copyright notice at top of file
+]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = true  # https://docs.astral.sh/ruff/settings/#lint_flake8-annotations_allow-star-arg-any
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "single"
+
+[tool.ruff.lint.flake8-pytest-style]
+mark-parentheses = false  # https://docs.astral.sh/ruff/settings/#lint_flake8-pytest-style_fixture-parentheses
+fixture-parentheses = false
+
+[tool.pytest.ini_options]
+python_files = [
+    "*_tests.py",
+    "test_*.py",
+]
+markers = [
+    "asyncio",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "serial",
+    "skip",
+    "xfail",
+]
+addopts = [
+    "--doctest-modules",
+    "--ignore=src/migrations",
+    "-v",
+    "--strict-markers",
+]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+show_missing = true
+skip_covered = false
+precision = 2
+
+[tool.coverage.html]
+directory = "htmlcov"
