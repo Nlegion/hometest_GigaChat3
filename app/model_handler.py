@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 import time
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 
 from app.core.logging_config import get_logger
 from app.llama_server_client import LlamaServerClient
@@ -35,19 +35,22 @@ class ModelHandler:
         self.client: LlamaServerClient | None = None
         self.use_gpu: bool = True  # Предполагаем GPU, так как сервер обычно на GPU
 
-        # Инициализация клиента с graceful degradation
+        # Создаем клиент (без проверки health, это будет сделано асинхронно)
         try:
-            self._init_client()
+            self.client = LlamaServerClient(self.llama_server_url)
         except Exception as e:
             logger.exception('model_init_exception', llama_server_url=llama_server_url, error=str(e))
             self.client = None
             self.use_gpu = False
 
-    def _init_client(self) -> None:
-        """Инициализирует клиент для llama.cpp сервера.
+    async def _init_client(self) -> None:
+        """Инициализирует клиент для llama.cpp сервера (асинхронно).
 
         При ошибке клиент остается None, исключение не выбрасывается.
         """
+        if self.client is None:
+            return
+
         start_time = time.time()
 
         logger.info(
@@ -56,17 +59,9 @@ class ModelHandler:
             model_name=self.model_name,
         )
 
-        self.client = LlamaServerClient(self.llama_server_url)
-
         # Проверяем доступность сервера
         try:
-            # Используем asyncio для проверки в синхронном контексте
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                available = loop.run_until_complete(self.client.check_health())
-            finally:
-                loop.close()
+            available = await self.client.check_health()
 
             if available:
                 init_time = time.time() - start_time
@@ -95,7 +90,7 @@ class ModelHandler:
         temperature: float = 0.7,
         max_tokens: int = 512,
         stream: bool = False,
-    ) -> str | Generator[str, None, None]:
+    ) -> str | AsyncGenerator[str, None]:
         """Генерирует ответ модели на основе истории диалога.
 
         Args:
@@ -134,9 +129,20 @@ class ModelHandler:
 
         try:
             if stream:
-                return self._generate_stream(
+                logger.info('generate_chat_response_returning_stream', prompt_hash=prompt_hash)
+                # _generate_stream - это async генератор, вызов возвращает coroutine
+                # НО мы не можем await-ить его здесь, потому что это async генератор
+                # Вместо этого возвращаем coroutine напрямую, и вызывающий код должен await-ить его
+                stream_gen_coro = self._generate_stream(
                     messages, system_prompt, temperature, max_tokens, prompt_hash, start_time
                 )
+                logger.info(
+                    'generate_chat_response_stream_gen_coro_created',
+                    prompt_hash=prompt_hash,
+                    coro_type=type(stream_gen_coro).__name__,
+                )
+                # Возвращаем coroutine, который при await вернет async генератор
+                return stream_gen_coro
             return await self._generate_sync(
                 messages, system_prompt, temperature, max_tokens, prompt_hash, start_time
             )
@@ -203,8 +209,8 @@ class ModelHandler:
         if self.client is None:
             raise RuntimeError('llama.cpp сервер недоступен')
 
-        # Получаем генератор от клиента (async метод возвращает генератор для streaming)
-        stream_gen = await self.client.generate_chat_completion(
+        # Получаем генератор от клиента (async метод возвращает генератор для streaming, не нужно await)
+        stream_gen = self.client.generate_chat_completion(
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -212,6 +218,9 @@ class ModelHandler:
             system_prompt=system_prompt,
             model_name=self.model_name,
         )
+        
+        # generate_chat_completion - это async функция, нужно await чтобы получить генератор
+        stream_gen = await stream_gen
 
         tokens_count = 0
         full_text = ''

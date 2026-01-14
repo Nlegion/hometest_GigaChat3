@@ -103,6 +103,8 @@ async def lifespan(app: FastAPI):
                 system_prompt_type=settings.system_prompt_type,
                 model_name=settings.model_name,
             )
+            # Инициализируем клиент асинхронно
+            await model_handler._init_client()
             app_logger.info(
                 'application_started',
                 model_loaded=model_handler.is_loaded(),
@@ -125,12 +127,7 @@ async def lifespan(app: FastAPI):
     # Закрываем клиент при завершении
     if model_handler and hasattr(model_handler, 'client') and model_handler.client:
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(model_handler.client.close())
-            finally:
-                loop.close()
+            await model_handler.client.close()
         except Exception as e:
             app_logger.warning('llama_server_client_close_error', error=str(e))
 
@@ -214,14 +211,36 @@ async def chat(request: ChatRequest):
 
     Поддерживает обычные и потоковые ответы.
     """
+    # Логируем САМОЕ ПЕРВОЕ - до всех проверок
+    request_id = str(uuid.uuid4())
+    print(f'[DEBUG] CHAT_ENDPOINT_CALLED, request_id={request_id}')
+    try:
+        logger.info('CHAT_ENDPOINT_CALLED', request_id=request_id)
+    except Exception as e:
+        print(f'[DEBUG] ERROR LOGGING: {e}')
+    
+    # Логируем входящий запрос
+    try:
+        logger.info(
+            'chat_request_received',
+            request_id=request_id,
+            messages_count=len(request.messages) if request.messages else 0,
+            stream=request.stream,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            system_prompt_type=request.system_prompt_type,
+        )
+    except Exception as e:
+        print(f'ERROR LOGGING chat_request_received: {e}')
+    
     if model_handler is None:
         error_msg = 'Модель не загружена'
-        logger.error('model_not_available')
+        logger.error('model_not_available', request_id=request_id)
         raise HTTPException(status_code=503, detail=error_msg)
 
     if not request.messages:
         error_msg = 'Список сообщений не может быть пустым'
-        logger.warning('empty_messages_request')
+        logger.warning('empty_messages_request', request_id=request_id)
         raise HTTPException(status_code=400, detail=error_msg)
 
     try:
@@ -230,14 +249,44 @@ async def chat(request: ChatRequest):
             model_handler.system_prompt_type = system_prompt_type
 
         messages_dict = [{'role': msg.role, 'content': msg.content} for msg in request.messages]
+        
+        # Логируем подготовленные сообщения (без полного содержимого для безопасности)
+        logger.info(
+            'messages_prepared',
+            request_id=request_id,
+            messages_count=len(messages_dict),
+            first_message_role=messages_dict[0]['role'] if messages_dict else None,
+        )
 
         if request.stream:
-            return StreamingResponse(
-                _stream_response(
-                    model_handler, messages_dict, request.temperature, request.max_tokens
-                ),
-                media_type='text/event-stream',
+            logger.info(
+                'streaming_request_starting',
+                request_id=request_id,
+                messages_count=len(messages_dict),
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
             )
+            
+            # _stream_response - это async генератор, передаем его напрямую
+            # FastAPI StreamingResponse автоматически обработает async генератор
+            print(f'[DEBUG] Creating stream_gen, request_id={request_id}')
+            stream_gen = _stream_response(
+                model_handler, messages_dict, request.temperature, request.max_tokens, request_id
+            )
+            print(f'[DEBUG] stream_gen created, type={type(stream_gen).__name__}, has_aiter={hasattr(stream_gen, "__aiter__")}')
+            
+            # Логируем тип объекта перед передачей в StreamingResponse
+            logger.info(
+                'stream_gen_created',
+                request_id=request_id,
+                stream_gen_type=type(stream_gen).__name__,
+                has_aiter=hasattr(stream_gen, '__aiter__'),
+                has_iter=hasattr(stream_gen, '__iter__'),
+                is_coroutine=asyncio.iscoroutine(stream_gen),
+            )
+            
+            print(f'[DEBUG] Returning StreamingResponse, request_id={request_id}')
+            return StreamingResponse(stream_gen, media_type='text/event-stream')
         response_text = await model_handler.generate_chat_response(
             messages=messages_dict,
             temperature=request.temperature,
@@ -263,29 +312,104 @@ async def _stream_response(
     messages: list[dict[str, str]],
     temperature: float,
     max_tokens: int,
+    request_id: str | None = None,
 ):
     """Генератор для потоковой отправки ответа."""
+    print(f'[DEBUG] _stream_response called, request_id={request_id}')
     try:
-        response_gen = await model_handler.generate_chat_response(
-            messages=messages,
+        print(f'[DEBUG] _stream_response: logging start, request_id={request_id}')
+        logger.info(
+            '_stream_response_started',
+            request_id=request_id,
+            messages_count=len(messages),
             temperature=temperature,
             max_tokens=max_tokens,
-            stream=True,
         )
-
-        if not isinstance(response_gen, type(iter([]))):
-            error_msg = 'Ожидался генератор для streaming'
-            logger.error('invalid_stream_generator')
-            yield f'data: {{"error": "{error_msg}"}}\n\n'
+        print(f'[DEBUG] _stream_response: logged start, request_id={request_id}')
+        
+        # generate_chat_response - async функция, при stream=True она возвращает coroutine от async генератора
+        # Нужно await-ить coroutine, чтобы получить async генератор
+        logger.info('calling_generate_chat_response', request_id=request_id)
+        try:
+            # Вызываем generate_chat_response с await, чтобы получить coroutine от async генератора
+            response_gen_coro = await model_handler.generate_chat_response(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+            )
+            logger.info('generate_chat_response_coro_received', request_id=request_id, coro_type=type(response_gen_coro).__name__)
+            
+            # await-им coroutine от async генератора, чтобы получить сам генератор
+            response_gen = await response_gen_coro
+            logger.info(
+                'generate_chat_response_completed',
+                request_id=request_id,
+                response_received=True,
+                response_type=type(response_gen).__name__,
+            )
+        except Exception as e:
+            logger.exception(
+                'generate_chat_response_failed',
+                request_id=request_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            import json
+            error_json = json.dumps({'error': f'Ошибка при получении генератора: {e!s}'}, ensure_ascii=False)
+            yield f'data: {error_json}\n\n'
             return
 
-        for chunk in response_gen:
-            yield f'data: {{"content": {chunk!r}}}\n\n'
+        # Логируем тип для диагностики
+        response_type_name = type(response_gen).__name__
+        has_aiter = hasattr(response_gen, '__aiter__')
+        has_iter = hasattr(response_gen, '__iter__')
+        logger.info(
+            'stream_generator_received',
+            request_id=request_id,
+            response_type=response_type_name,
+            has_aiter=has_aiter,
+            has_iter=has_iter,
+            module=type(response_gen).__module__,
+        )
 
+        # Проверяем, что это async генератор
+        if not has_aiter:
+            error_msg = f'Ожидался async генератор для streaming, получен {response_type_name}'
+            logger.error(
+                'invalid_stream_generator',
+                request_id=request_id,
+                response_type=response_type_name,
+                has_aiter=has_aiter,
+                has_iter=has_iter,
+            )
+            import json
+            error_json = json.dumps({'error': error_msg}, ensure_ascii=False)
+            yield f'data: {error_json}\n\n'
+            return
+        
+        logger.info('starting_async_iteration', request_id=request_id)
+
+        chunks_count = 0
+        async for chunk in response_gen:
+            if chunk:
+                chunks_count += 1
+                # Экранируем JSON правильно
+                import json
+                chunk_json = json.dumps({'content': chunk}, ensure_ascii=False)
+                yield f'data: {chunk_json}\n\n'
+                
+                # Логируем первые несколько чанков для диагностики
+                if chunks_count <= 3:
+                    logger.debug('chunk_yielded', request_id=request_id, chunk_number=chunks_count, chunk_length=len(chunk))
+
+        logger.info('streaming_completed', request_id=request_id, total_chunks=chunks_count)
         yield 'data: [DONE]\n\n'
     except Exception as e:
-        logger.exception('streaming_failed', error=str(e))
-        yield f'data: {{"error": "Ошибка при потоковой генерации: {e!s}"}}\n\n'
+        logger.exception('streaming_failed', request_id=request_id, error=str(e), error_type=type(e).__name__)
+        import json
+        error_json = json.dumps({'error': f'Ошибка при потоковой генерации: {e!s}'}, ensure_ascii=False)
+        yield f'data: {error_json}\n\n'
 
 
 @app.get('/api/health', response_model=HealthResponse)

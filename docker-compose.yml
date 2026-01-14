@@ -2,27 +2,28 @@ version: '3.8'
 
 services:
   llama-server:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.llama-server
     container_name: llama-server
     ports:
       - "8080:8080"
-    environment:
-      - MODEL_PATH=${MODEL_PATH:-data/model/GigaChat3-10B-A1.8B-q6_k.gguf}
     volumes:
-      - ./data/model:/app/data/model:ro
-    command: >
-      llama-server
-      -m /app/data/model/GigaChat3-10B-A1.8B-q6_k.gguf
-      -np 1
-      -cb
-      -ctk q8_0
-      -ctv q8_0
-      -fa on
-      --n-gpu-layers 999
-      --ctx-size 32768
-      --port 8080
-      --host 0.0.0.0
-      --jinja
+      - ./data/model:/models:ro
+    command:
+      - --model
+      - /models/GigaChat3-10B-A1.8B-q6_k.gguf
+      - --parallel
+      - "1"
+      - --cont-batching
+      - --ctx-size
+      - "32768"
+      - --port
+      - "8080"
+      - --host
+      - "0.0.0.0"
+      - --n-gpu-layers
+      - "999"
     deploy:
       resources:
         reservations:
@@ -36,10 +37,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s
 
   gigachat3-web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.web
     container_name: gigachat3-web
     ports:
       - "8000:8000"

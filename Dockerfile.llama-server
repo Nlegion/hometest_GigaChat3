@@ -1,0 +1,50 @@
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y \
+    git \
+    cmake \
+    curl \
+    libcurl4-openssl-dev \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Настройка переменных окружения для CUDA
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:${LD_LIBRARY_PATH}
+
+# Сборка llama.cpp сервера
+# Разделяем на отдельные RUN для лучшего кэширования
+WORKDIR /tmp
+RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
+
+WORKDIR /tmp/llama.cpp
+RUN cmake -B build \
+        -DGGML_CUDA=ON \
+        -DCUDA_TOOLKIT_ROOT_DIR=${CUDA_HOME} \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link=${CUDA_HOME}/lib64/stubs -Wl,-rpath=${CUDA_HOME}/lib64 -L${CUDA_HOME}/lib64/stubs -lcuda" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link=${CUDA_HOME}/lib64/stubs -L${CUDA_HOME}/lib64/stubs"
+
+# Ограничиваем параллелизм для стабильности (используем 4 потока вместо всех ядер)
+# Используем LD_LIBRARY_PATH для линковки со stubs библиотеками
+RUN LD_LIBRARY_PATH=${CUDA_HOME}/lib64/stubs:${LD_LIBRARY_PATH} \
+    cmake --build build --config Release --target llama-server -j 4
+
+# Копируем llama-server и все необходимые shared библиотеки
+RUN mv build/bin/llama-server /usr/local/bin/llama-server && \
+    find build/bin -name "*.so*" -type f -exec cp {} /usr/local/lib/ \; || true && \
+    find build/lib -name "*.so*" -type f -exec cp {} /usr/local/lib/ \; || true
+
+# Обновляем LD_LIBRARY_PATH для runtime
+ENV LD_LIBRARY_PATH=/usr/local/lib:${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:${LD_LIBRARY_PATH}
+
+WORKDIR /
+RUN rm -rf /tmp/llama.cpp
+
+EXPOSE 8080
+
+ENTRYPOINT ["llama-server"]
