@@ -1,0 +1,7 @@
+- repo: https://github.com/PyCQA/bandit
+  rev: 1.8.3 # Укажи актуальную версию
+  hooks:
+    - id: bandit
+      args: ["-c", "pyproject.toml"] # Явно указываем конфиг[citation:2]
+      additional_dependencies: ["bandit[toml]"] # Для чтения TOML[citation:2]
+      files: ^(src|app|project_name)/

@@ -1,0 +1,99 @@
+description: СТРОГИЕ правила логирования и обработки ошибок
+globs: "**/*.py"
+alwaysApply: true
+---
+# СТРОГИЕ ПРАВИЛА: Логирование и исключения
+
+Это правило содержит **абсолютные требования** к обработке ошибок и логированию. При написании кода соблюдай его в первую очередь.
+
+## 🚫 АБСОЛЮТНЫЕ ЗАПРЕТЫ
+Следующее **НЕДОПУСТИМО**. При обнаружении — исправь немедленно.
+
+1.  **Голый `except:`**
+    ```python
+    # ❌ НЕДОПУСТИМО
+    try:
+        ...
+    except:  # Поймает BaseException, включая KeyboardInterrupt
+        ...
+
+    # ✅ ИСПРАВЬ: Всегда указывай конкретный тип исключения
+    try:
+        ...
+    except ValueError:
+        ...
+    except (TypeError, KeyError):
+        ...
+    ```
+
+2.  **Тихие исключения (`except ...: pass`)**
+    ```python
+    # ❌ НЕДОПУСТИМО
+    try:
+        ...
+    except ValueError:
+        pass  # Ошибка бесследно исчезла
+
+    # ✅ ИСПРАВЬ: Всегда логируй пойманные исключения
+    try:
+        ...
+    except ValueError as e:
+        logger.warning('Ожидаемая ошибка валидации', error=str(e))
+    ```
+
+3.  **`print()` для логирования или отладки**
+    ```python
+    # ❌ НЕДОПУСТИМО
+    print(f'User login: {user_id}')
+
+    # ✅ ИСПРАВЬ: Используй только структурированное логирование
+    logger.info('user_login', user_id=user_id)
+    ```
+
+4.  **Логирование необработанных (raw) пользовательских данных**
+    ```python
+    # ❌ НЕДОПУСТИМО (риск утечки PII)
+    logger.info('User input', data=user_raw_input)
+
+    # ✅ ИСПРАВЬ: Санируй (экранируй, хэшируй) данные
+    logger.info('User input', input_length=len(user_raw_input), input_hash=hash_input(user_raw_input))
+    ```
+
+## 🪵 ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ К ЛОГИРОВАНИЮ
+
+### 1. Используй только структурированное логирование (structlog)
+```python
+import structlog
+logger = structlog.get_logger(__name__)  # или structlog.get_logger() 
+```
+
+
+### 2. Всегда добавляй контекст function и file
+В начале каждой функции создавай `function_name` и используй его во всех логах.
+
+```python
+def process_data(key: str, data: dict) -> dict:
+    function_name = 'process_data'  # Или 'ClassName.method_name'
+    logger.info('start', function=function_name, file='processor.py', key=key)
+
+    try:
+        # ... код
+        logger.info('success', function=function_name, file='processor.py', result_id=result.id)
+        return result
+    except Exception as e:
+        # Для ошибок используй logger.exception() (лучше, чем exc_info=True)
+        logger.exception('processing_failed', function=function_name, file='processor.py', key=key)
+        raise
+```
+
+### 3. Для ошибок используй logger.exception()
+Метод `.exception()` автоматически добавляет полный traceback.
+
+```python
+# ✅ ПРАВИЛЬНО И ПРОСТО
+try:
+    risky_operation()
+except APIError as e:
+    logger.exception('api_call_failed', endpoint=url, status=e.status_code)
+    raise
+```

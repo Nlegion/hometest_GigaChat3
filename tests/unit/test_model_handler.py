@@ -146,7 +146,8 @@ async def test_generate_chat_response_parameters(mock_model_handler, sample_sing
 async def test_generate_chat_response_exception_handling(mock_model_handler, sample_single_message):
     """Тест обработки исключений при генерации."""
     async def generate_with_error(*args, **kwargs):
-        raise RuntimeError('Generation error')
+        error_msg = 'Generation error'
+        raise RuntimeError(error_msg)
 
     mock_model_handler.client.generate_chat_completion = AsyncMock(side_effect=generate_with_error)
 

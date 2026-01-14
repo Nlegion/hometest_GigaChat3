@@ -1,0 +1,218 @@
+description: Строгие стандарты тестирования с pytest
+globs: "**/test_*.py"
+alwaysApply: true
+---
+# 🧪 СТРОГИЕ ПРАВИЛА: Тестирование (pytest)
+
+Это правило определяет абсолютные требования к написанию тестов. Оно применяется ко всем файлам тестов (`test_*.py`) и дополняет ваш основной конфиг Ruff, который уже содержит настройки для тестов (игнорирование S101 и ARG001 в тестах).
+
+## 🚫 АБСОЛЮТНЫЕ ЗАПРЕТЫ
+
+1.  **Тесты без ассертов (или с `pass`)**:
+    ```python
+    # ❌ НЕДОПУСТИМО
+    def test_something():
+        result = some_function()
+        # Нет assert!
+
+    def test_empty():
+        pass
+
+    # ✅ ДОПУСТИМО
+    def test_something():
+        result = some_function()
+        assert result == expected
+    ```
+
+2.  **Голый `except:` в тестах** (такой же запрет, как и в основном коде):
+    ```python
+    # ❌ НЕДОПУСТИМО
+    try:
+        risky_call()
+    except:  # Ловит всё, включая KeyboardInterrupt
+        pass
+
+    # ✅ ДОПУСТИМО: лови конкретные исключения
+    with pytest.raises(ValueError):
+        risky_call()
+    ```
+
+3.  **Изменение глобального состояния без отката (сброса)**:
+    ```python
+    # ❌ НЕДОПУСТИМО (если не очищается в фикстуре или teardown)
+    def test_modify_global():
+        global SOME_CONSTANT
+        old_value = SOME_CONSTANT
+        SOME_CONSTANT = "new"
+        # ... тест
+        # ❌ НЕ ВОССТАНАВЛИВАЕТ old_value
+
+    # ✅ ДОПУСТИМО: используй фикстуру с autouse=True или моки
+    @pytest.fixture(autouse=True)
+    def reset_global():
+        original = SOME_CONSTANT
+        yield
+        SOME_CONSTANT = original
+    ```
+
+4.  **Логирование в тестах через `print()` или `logger`** (используй `caplog` или `capsys`):
+    ```python
+    # ❌ НЕДОПУСТИМО
+    def test_with_print():
+        print("Debug info")  # Засоряет вывод
+        assert something
+
+    # ✅ ДОПУСТИМО
+    def test_with_log(caplog):
+        with caplog.at_level("INFO"):
+            function_that_logs()
+        assert "expected message" in caplog.text
+    ```
+
+## ✅ ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ
+
+### 1. **Именование тестовых функций и файлов**
+- **Файлы:** `test_<module_name>.py` или `test_<feature>.py`
+- **Функции:** `test_<scenario>_<expected_result>` или `test_<method>_<condition>`
+```python
+# ✅ ПРАВИЛЬНО
+def test_create_user_with_valid_data_succeeds(): ...
+def test_user_model_email_validation_fails_on_malformed(): ...
+```
+### 2. Типизация и документация
+Все фикстуры должны иметь аннотации типов.
+
+Сложные тесты должны иметь docstring, объясняющий сценарий.
+
+```python
+# ✅ ПРАВИЛЬНО
+@pytest.fixture
+def valid_user_data() -> dict[str, Any]:
+    """Возвращает валидные данные для создания пользователя."""
+    return {"name": "Test", "email": "test@example.com"}
+
+def test_complex_scenario():
+    """
+    Тестирует сценарий, когда пользователь с неподтверждённым email
+    пытается получить доступ к платному контенту.
+    Ожидается ошибка PermissionDenied.
+    """
+    # ... тест
+```
+
+### 3. Структура теста (шаблон AAA)
+Каждый тест должен чётко разделять:
+
+- **Arrange**: подготовка данных и состояния
+- **Act**: выполнение тестируемого действия
+- **Assert**: проверки результата
+
+```python
+def test_add_item_to_cart():
+    # Arrange
+    cart = ShoppingCart()
+    item = Item(id=1, name="Book", price=10.0)
+
+    # Act
+    cart.add(item)
+
+    # Assert
+    assert cart.size == 1
+    assert cart.total_price == 10.0
+```
+
+### 4. Асинхронные тесты
+Используй `pytest.mark.asyncio` для async-тестов.
+
+Фикстуры для асинхронных ресурсов должны быть async.
+
+```python
+import pytest
+
+@pytest.mark.asyncio
+async def test_fetch_user_from_db():
+    user = await fetch_user(1)
+    assert user.name == "Alice"
+
+@pytest.fixture
+async def async_client():
+    async with AsyncClient() as client:
+        yield client
+```
+
+### 5. Использование фикстур
+Предпочитай фикстуры над setUp/tearDown методами (стиль pytest).
+
+Для сложной подготовки данных используй фабрики (например, factory_boy).
+
+```python
+# ✅ ПРАВИЛЬНО
+@pytest.fixture
+def user_factory():
+    def _create_user(**kwargs):
+        defaults = {"name": "Test", "email": "test@example.com"}
+        defaults.update(kwargs)
+        return User(**defaults)
+    return _create_user
+
+def test_user_with_factory(user_factory):
+    user = user_factory(name="Custom")
+    assert user.name == "Custom"
+```
+
+### 6. Параметризация тестов
+Для тестирования одного сценария с разными данными используй `@pytest.mark.parametrize`.
+
+```python
+# ✅ ПРАВИЛЬНО
+@pytest.mark.parametrize(
+    "input_data, expected",
+    [
+        ("normal@example.com", True),
+        ("malformed@", False),
+        ("", False),
+    ],
+)
+def test_email_validation(input_data, expected):
+    result = validate_email(input_data)
+    assert result == expected
+```
+
+### 7. Тестирование исключений
+Используй `pytest.raises` для проверки выброса исключений.
+
+```python
+# ✅ ПРАВИЛЬНО
+def test_division_by_zero():
+    with pytest.raises(ZeroDivisionError, match="division by zero"):
+        1 / 0
+```
+
+### 8. Моки и заглушки
+Используй `unittest.mock` или `pytest-mock` для изоляции тестируемого кода.
+
+Мокируй только то, что необходимо, сохраняя как можно больше реального кода.
+
+```python
+# ✅ ПРАВИЛЬНО
+def test_send_email(mocker):
+    mock_send = mocker.patch("app.mail.send")
+    user = User(email="test@example.com")
+    user.notify()
+    mock_send.assert_called_once_with("test@example.com", "Welcome!")
+```
+
+### 9. Интеграционные тесты с FastAPI
+Используй `TestClient` из `httpx` или `fastapi.testclient`.
+
+Следи за жизненным циклом приложения (старт/стоп).
+
+```python
+from fastapi.testclient import TestClient
+
+def test_create_item():
+    client = TestClient(app)
+    response = client.post("/items/", json={"name": "Foo"})
+    assert response.status_code == 200
+    assert response.json()["name"] == "Foo"
+```

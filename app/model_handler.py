@@ -36,10 +36,12 @@ class ModelHandler:
         self.use_gpu: bool = True  # Предполагаем GPU, так как сервер обычно на GPU
 
         # Создаем клиент (без проверки health, это будет сделано асинхронно)
+        function_name = 'ModelHandler.__init__'
+        file_name = 'model_handler.py'
         try:
             self.client = LlamaServerClient(self.llama_server_url)
         except Exception as e:
-            logger.exception('model_init_exception', llama_server_url=llama_server_url, error=str(e))
+            logger.exception('model_init_exception', function=function_name, file=file_name, llama_server_url=llama_server_url, error=str(e))
             self.client = None
             self.use_gpu = False
 
@@ -48,6 +50,8 @@ class ModelHandler:
 
         При ошибке клиент остается None, исключение не выбрасывается.
         """
+        function_name = 'ModelHandler._init_client'
+        file_name = 'model_handler.py'
         if self.client is None:
             return
 
@@ -55,6 +59,8 @@ class ModelHandler:
 
         logger.info(
             'llama_server_client_init_started',
+            function=function_name,
+            file=file_name,
             llama_server_url=self.llama_server_url,
             model_name=self.model_name,
         )
@@ -67,22 +73,26 @@ class ModelHandler:
                 init_time = time.time() - start_time
                 logger.info(
                     'llama_server_client_init_success',
+                    function=function_name,
+                    file=file_name,
                     llama_server_url=self.llama_server_url,
                     init_time_seconds=round(init_time, 2),
                 )
             else:
                 logger.warning(
                     'llama_server_client_unavailable',
+                    function=function_name,
+                    file=file_name,
                     llama_server_url=self.llama_server_url,
                 )
                 self.client = None
                 self.use_gpu = False
         except Exception as e:
             error_msg = f'Ошибка при инициализации клиента llama.cpp сервера: {e!s}'
-            logger.exception('llama_server_client_init_exception', error=str(e))
+            logger.exception('llama_server_client_init_exception', function=function_name, file=file_name, error=str(e))
             self.client = None
             self.use_gpu = False
-            logger.warning('llama_server_client_init_failed_graceful', error=error_msg)
+            logger.warning('llama_server_client_init_failed_graceful', function=function_name, file=file_name, error=error_msg)
 
     async def generate_chat_response(
         self,
@@ -103,9 +113,11 @@ class ModelHandler:
             Ответ модели (строка или генератор строк для streaming)
 
         """
+        function_name = 'ModelHandler.generate_chat_response'
+        file_name = 'model_handler.py'
         if self.client is None:
             error_msg = 'llama.cpp сервер недоступен'
-            logger.error('llama_server_not_available')
+            logger.error('llama_server_not_available', function=function_name, file=file_name)
             raise RuntimeError(error_msg)
 
         start_time = time.time()
@@ -119,6 +131,8 @@ class ModelHandler:
 
         logger.info(
             'generation_started',
+            function=function_name,
+            file=file_name,
             prompt_hash=prompt_hash,
             prompt_length=prompt_length,
             temperature=temperature,
@@ -129,7 +143,7 @@ class ModelHandler:
 
         try:
             if stream:
-                logger.info('generate_chat_response_returning_stream', prompt_hash=prompt_hash)
+                logger.info('generate_chat_response_returning_stream', function=function_name, file=file_name, prompt_hash=prompt_hash)
                 # _generate_stream() возвращает async генератор напрямую (не coroutine)
                 # Возвращаем генератор напрямую
                 return self._generate_stream(
@@ -142,6 +156,8 @@ class ModelHandler:
             generation_time = time.time() - start_time
             logger.exception(
                 'generation_failed',
+                function=function_name,
+                file=file_name,
                 prompt_hash=prompt_hash,
                 prompt_length=prompt_length,
                 generation_time_seconds=round(generation_time, 2),
@@ -159,8 +175,11 @@ class ModelHandler:
         start_time: float,
     ) -> str:
         """Генерирует ответ синхронно через HTTP API."""
+        function_name = 'ModelHandler._generate_sync'
+        file_name = 'model_handler.py'
         if self.client is None:
-            raise RuntimeError('llama.cpp сервер недоступен')
+            error_msg = 'llama.cpp сервер недоступен'
+            raise RuntimeError(error_msg)
 
         # Вызываем async метод напрямую, так как мы в async контексте
         generated_text = await self.client.generate_chat_completion(
@@ -179,6 +198,8 @@ class ModelHandler:
 
         logger.info(
             'generation_completed',
+            function=function_name,
+            file=file_name,
             prompt_hash=prompt_hash,
             estimated_tokens=estimated_tokens,
             generation_time_seconds=round(generation_time, 2),
@@ -196,10 +217,13 @@ class ModelHandler:
         max_tokens: int,
         prompt_hash: str,
         start_time: float,
-    ):
+    ) -> AsyncGenerator[str, None]:
         """Генерирует ответ потоково через HTTP API (async генератор)."""
+        function_name = 'ModelHandler._generate_stream'
+        file_name = 'model_handler.py'
         if self.client is None:
-            raise RuntimeError('llama.cpp сервер недоступен')
+            error_msg = 'llama.cpp сервер недоступен'
+            raise RuntimeError(error_msg)
 
         # Получаем генератор от клиента (async метод возвращает генератор для streaming, не нужно await)
         stream_gen = self.client.generate_chat_completion(
@@ -228,6 +252,8 @@ class ModelHandler:
 
         logger.info(
             'streaming_completed',
+            function=function_name,
+            file=file_name,
             prompt_hash=prompt_hash,
             tokens_generated=tokens_count,
             generation_time_seconds=round(generation_time, 2),

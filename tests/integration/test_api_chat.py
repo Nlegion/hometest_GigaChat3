@@ -1,10 +1,13 @@
+from collections.abc import Generator
 from unittest.mock import patch
 
 import pytest
 
+from app.model_handler import ModelHandler
+
 
 @pytest.fixture
-def mock_model_handler_for_api(mock_model_handler, monkeypatch):
+def mock_model_handler_for_api(mock_model_handler: ModelHandler, monkeypatch: pytest.MonkeyPatch) -> Generator[ModelHandler, None, None]:
     """Подменяет глобальный model_handler в приложении."""
     with patch('app.main.model_handler', mock_model_handler):
         yield mock_model_handler

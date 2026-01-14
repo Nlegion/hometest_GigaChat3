@@ -1,6 +1,6 @@
 import json
 import time
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
@@ -33,25 +33,29 @@ class LlamaServerClient:
             True если сервер доступен, False иначе
 
         """
+        function_name = 'LlamaServerClient.check_health'
+        file_name = 'llama_server_client.py'
         try:
             # Попытка простого запроса к серверу
             response = await self.client.get(f'{self.server_url}/health', timeout=5.0)
             self._available = response.status_code == 200
             if self._available:
-                logger.info('llama_server_available', server_url=self.server_url)
+                logger.info('llama_server_available', function=function_name, file=file_name, server_url=self.server_url)
             else:
                 logger.warning(
                     'llama_server_unavailable',
+                    function=function_name,
+                    file=file_name,
                     server_url=self.server_url,
                     status_code=response.status_code,
                 )
             return self._available
         except httpx.RequestError as e:
-            logger.warning('llama_server_health_check_failed', server_url=self.server_url, error=str(e))
+            logger.warning('llama_server_health_check_failed', function=function_name, file=file_name, server_url=self.server_url, error=str(e))
             self._available = False
             return False
         except Exception as e:
-            logger.exception('llama_server_health_check_exception', server_url=self.server_url, error=str(e))
+            logger.exception('llama_server_health_check_exception', function=function_name, file=file_name, server_url=self.server_url, error=str(e))
             self._available = False
             return False
 
@@ -97,7 +101,7 @@ class LlamaServerClient:
         stream: bool = False,
         system_prompt: str | None = None,
         model_name: str = 'ai-sage/GigaChat3-10B-A1.8B',
-    ) -> str | Generator[str, None, None]:
+    ) -> str | AsyncGenerator[str, None]:
         """Генерирует ответ через llama.cpp сервер.
 
         Args:
@@ -115,12 +119,14 @@ class LlamaServerClient:
             RuntimeError: Если сервер недоступен или произошла ошибка
 
         """
+        function_name = 'LlamaServerClient.generate_chat_completion'
+        file_name = 'llama_server_client.py'
         if not self._available:
             # Проверяем доступность перед запросом
             available = await self.check_health()
             if not available:
                 error_msg = f'llama.cpp сервер недоступен: {self.server_url}'
-                logger.error('llama_server_not_available', server_url=self.server_url)
+                logger.error('llama_server_not_available', function=function_name, file=file_name, server_url=self.server_url)
                 raise RuntimeError(error_msg)
 
         api_messages = self._format_messages_for_api(messages, system_prompt)
@@ -140,6 +146,8 @@ class LlamaServerClient:
 
     async def _generate_sync(self, request_data: dict[str, Any]) -> str:
         """Генерирует ответ синхронно через HTTP API."""
+        function_name = 'LlamaServerClient._generate_sync'
+        file_name = 'llama_server_client.py'
         try:
             response = await self.client.post(
                 f'{self.server_url}/v1/chat/completions',
@@ -155,6 +163,8 @@ class LlamaServerClient:
 
             logger.info(
                 'llama_server_generation_completed',
+                function=function_name,
+                file=file_name,
                 tokens_used=tokens_used,
                 response_length=len(content),
             )
@@ -162,19 +172,21 @@ class LlamaServerClient:
             return content
         except httpx.HTTPStatusError as e:
             error_msg = f'Ошибка HTTP от llama.cpp сервера: {e.response.status_code} - {e.response.text}'
-            logger.exception('llama_server_http_error', status_code=e.response.status_code, error=str(e))
+            logger.exception('llama_server_http_error', function=function_name, file=file_name, status_code=e.response.status_code, error=str(e))
             raise RuntimeError(error_msg) from e
         except httpx.RequestError as e:
             error_msg = f'Ошибка запроса к llama.cpp серверу: {e!s}'
-            logger.exception('llama_server_request_error', error=str(e))
+            logger.exception('llama_server_request_error', function=function_name, file=file_name, error=str(e))
             raise RuntimeError(error_msg) from e
         except Exception as e:
             error_msg = f'Неожиданная ошибка при генерации: {e!s}'
-            logger.exception('llama_server_generation_error', error=str(e))
+            logger.exception('llama_server_generation_error', function=function_name, file=file_name, error=str(e))
             raise RuntimeError(error_msg) from e
 
-    async def _generate_stream_async(self, request_data: dict[str, Any]):
+    async def _generate_stream_async(self, request_data: dict[str, Any]) -> AsyncGenerator[str, None]:
         """Генерирует ответ потоково через HTTP API (async генератор)."""
+        function_name = 'LlamaServerClient._generate_stream_async'
+        file_name = 'llama_server_client.py'
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as async_client:
                 async with async_client.stream(
@@ -199,16 +211,16 @@ class LlamaServerClient:
                                     if content:
                                         yield content
                             except json.JSONDecodeError:
-                                logger.warning('llama_server_stream_parse_error', line=line)
+                                logger.warning('llama_server_stream_parse_error', function=function_name, file=file_name, line=line)
                                 continue
 
         except httpx.HTTPStatusError as e:
             error_msg = f'Ошибка HTTP при streaming: {e.response.status_code}'
-            logger.exception('llama_server_stream_http_error', status_code=e.response.status_code)
+            logger.exception('llama_server_stream_http_error', function=function_name, file=file_name, status_code=e.response.status_code)
             raise RuntimeError(error_msg) from e
         except Exception as e:
             error_msg = f'Ошибка при потоковой генерации: {e!s}'
-            logger.exception('llama_server_stream_error', error=str(e))
+            logger.exception('llama_server_stream_error', function=function_name, file=file_name, error=str(e))
             raise RuntimeError(error_msg) from e
 
     async def close(self) -> None:

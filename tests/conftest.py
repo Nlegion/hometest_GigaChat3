@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,7 +10,7 @@ from app.model_handler import ModelHandler
 
 
 @pytest.fixture
-def mock_llama_server_client():
+def mock_llama_server_client() -> MagicMock:
     """Создает мок LlamaServerClient."""
     mock_client = MagicMock()
     mock_client.is_available.return_value = True
@@ -42,7 +43,7 @@ def mock_llama_server_client():
 
 
 @pytest.fixture
-def mock_model_handler(mock_llama_server_client):
+def mock_model_handler(mock_llama_server_client: MagicMock) -> Generator[ModelHandler, None, None]:
     """Создает ModelHandler с мок-клиентом llama.cpp сервера."""
     with patch('app.model_handler.LlamaServerClient', return_value=mock_llama_server_client):
         handler = ModelHandler(
@@ -54,7 +55,7 @@ def mock_model_handler(mock_llama_server_client):
 
 
 @pytest.fixture
-def mock_model_handler_for_api(mock_llama_server_client):
+def mock_model_handler_for_api(mock_llama_server_client: MagicMock) -> ModelHandler:
     """Создает ModelHandler с мок-клиентом для API тестов."""
     with patch('app.model_handler.LlamaServerClient', return_value=mock_llama_server_client):
         handler = ModelHandler(
@@ -66,7 +67,7 @@ def mock_model_handler_for_api(mock_llama_server_client):
 
 
 @pytest.fixture
-def test_client(mock_model_handler_for_api):
+def test_client(mock_model_handler_for_api: ModelHandler) -> TestClient:
     """Создает тестовый клиент FastAPI."""
     # Подменяем реальный model_handler на мок
     app.state.model_handler = mock_model_handler_for_api
@@ -74,7 +75,7 @@ def test_client(mock_model_handler_for_api):
 
 
 @pytest.fixture
-def sample_messages():
+def sample_messages() -> list[dict[str, str]]:
     """Примеры сообщений для тестов."""
     return [
         {'role': 'user', 'content': 'Привет!'},
@@ -84,6 +85,6 @@ def sample_messages():
 
 
 @pytest.fixture
-def sample_single_message():
+def sample_single_message() -> list[dict[str, str]]:
     """Одно сообщение для тестов."""
     return [{'role': 'user', 'content': 'Тестовое сообщение'}]

@@ -1,11 +1,12 @@
 import asyncio
 import time
 import uuid
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Callable
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -34,7 +35,7 @@ class Settings(BaseSettings):
     n_ctx: int = Field(default=8192)
 
     # Общие параметры
-    host: str = Field(default='0.0.0.0')
+    host: str = Field(default='127.0.0.1')
     port: int = Field(default=8000)
     log_level: str = Field(default='INFO')
     log_format: str = Field(default='json')
@@ -89,12 +90,14 @@ class HealthResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения."""
+    function_name = 'lifespan'
+    file_name = 'main.py'
     global model_handler
 
     setup_logging(log_level=settings.log_level, log_format=settings.log_format)
     app_logger = get_logger(__name__)
 
-    app_logger.info('application_starting', host=settings.host, port=settings.port)
+    app_logger.info('application_starting', function=function_name, file=file_name, host=settings.host, port=settings.port)
 
     try:
         if settings.use_llama_server:
@@ -107,6 +110,8 @@ async def lifespan(app: FastAPI):
             await model_handler._init_client()
             app_logger.info(
                 'application_started',
+                function=function_name,
+                file=file_name,
                 model_loaded=model_handler.is_loaded(),
                 llama_server_url=settings.llama_server_url,
             )
@@ -115,11 +120,13 @@ async def lifespan(app: FastAPI):
             # ВНИМАНИЕ: Требует llama-cpp-python и не поддерживает DeepSeek2/GigaChat3
             app_logger.warning(
                 'legacy_mode_disabled',
+                function=function_name,
+                file=file_name,
                 message='Режим llama-cpp-python отключен. Используйте use_llama_server=true',
             )
             model_handler = None
     except Exception as e:
-        app_logger.exception('application_startup_failed', error=str(e))
+        app_logger.exception('application_startup_failed', function=function_name, file=file_name, error=str(e))
         model_handler = None
 
     yield
@@ -129,9 +136,9 @@ async def lifespan(app: FastAPI):
         try:
             await model_handler.client.close()
         except Exception as e:
-            app_logger.warning('llama_server_client_close_error', error=str(e))
+            app_logger.warning('llama_server_client_close_error', function=function_name, file=file_name, error=str(e))
 
-    app_logger.info('application_shutting_down')
+    app_logger.info('application_shutting_down', function=function_name, file=file_name)
 
 
 app = FastAPI(
@@ -156,8 +163,10 @@ templates = Environment(
 
 
 @app.middleware('http')
-async def log_requests(request: Request, call_next):
+async def log_requests(request: Request, call_next: Callable[[Request], Any]) -> Response:
     """Middleware для логирования HTTP запросов."""
+    function_name = 'log_requests'
+    file_name = 'main.py'
     request_id = str(uuid.uuid4())
     start_time = time.time()
 
@@ -166,6 +175,8 @@ async def log_requests(request: Request, call_next):
 
     logger.info(
         'request_started',
+        function=function_name,
+        file=file_name,
         method=request.method,
         path=request.url.path,
         query_params=dict(request.query_params),
@@ -177,6 +188,8 @@ async def log_requests(request: Request, call_next):
 
         logger.info(
             'request_completed',
+            function=function_name,
+            file=file_name,
             method=request.method,
             path=request.url.path,
             status_code=response.status_code,
@@ -190,6 +203,8 @@ async def log_requests(request: Request, call_next):
         process_time = time.time() - start_time
         logger.exception(
             'request_failed',
+            function=function_name,
+            file=file_name,
             method=request.method,
             path=request.url.path,
             process_time_seconds=round(process_time, 3),
@@ -199,23 +214,27 @@ async def log_requests(request: Request, call_next):
 
 
 @app.get('/', response_class=HTMLResponse)
-async def index(request: Request):
+async def index(request: Request) -> HTMLResponse:
     """Главная страница с интерфейсом чата."""
     template = templates.get_template('index.html')
     return HTMLResponse(content=template.render(request=request))
 
 
 @app.post('/api/chat', response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest) -> ChatResponse | StreamingResponse:
     """Основной эндпоинт для диалога с моделью.
 
     Поддерживает обычные и потоковые ответы.
     """
+    function_name = 'chat'
+    file_name = 'main.py'
     request_id = str(uuid.uuid4())
     
     # Логируем входящий запрос
     logger.info(
         'chat_request_received',
+        function=function_name,
+        file=file_name,
         request_id=request_id,
         messages_count=len(request.messages) if request.messages else 0,
         stream=request.stream,
@@ -226,12 +245,12 @@ async def chat(request: ChatRequest):
     
     if model_handler is None:
         error_msg = 'Модель не загружена'
-        logger.error('model_not_available', request_id=request_id)
+        logger.error('model_not_available', function=function_name, file=file_name, request_id=request_id)
         raise HTTPException(status_code=503, detail=error_msg)
 
     if not request.messages:
         error_msg = 'Список сообщений не может быть пустым'
-        logger.warning('empty_messages_request', request_id=request_id)
+        logger.warning('empty_messages_request', function=function_name, file=file_name, request_id=request_id)
         raise HTTPException(status_code=400, detail=error_msg)
 
     try:
@@ -244,6 +263,8 @@ async def chat(request: ChatRequest):
         # Логируем подготовленные сообщения (без полного содержимого для безопасности)
         logger.info(
             'messages_prepared',
+            function=function_name,
+            file=file_name,
             request_id=request_id,
             messages_count=len(messages_dict),
             first_message_role=messages_dict[0]['role'] if messages_dict else None,
@@ -252,6 +273,8 @@ async def chat(request: ChatRequest):
         if request.stream:
             logger.info(
                 'streaming_request_starting',
+                function=function_name,
+                file=file_name,
                 request_id=request_id,
                 messages_count=len(messages_dict),
                 temperature=request.temperature,
@@ -267,6 +290,8 @@ async def chat(request: ChatRequest):
             # Логируем тип объекта перед передачей в StreamingResponse
             logger.info(
                 'stream_gen_created',
+                function=function_name,
+                file=file_name,
                 request_id=request_id,
                 stream_gen_type=type(stream_gen).__name__,
                 has_aiter=hasattr(stream_gen, '__aiter__'),
@@ -282,15 +307,16 @@ async def chat(request: ChatRequest):
 
         if not isinstance(response_text, str):
             error_msg = 'Неожиданный тип ответа от модели'
-            logger.error('unexpected_response_type')
+            logger.error('unexpected_response_type', function=function_name, file=file_name)
             raise HTTPException(status_code=500, detail=error_msg)
 
         return ChatResponse(content=response_text)
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception('chat_request_failed', error=str(e))
-        raise HTTPException(status_code=500, detail=f'Ошибка при генерации ответа: {e!s}') from e
+        logger.exception('chat_request_failed', function=function_name, file=file_name, error=str(e))
+        error_msg = f'Ошибка при генерации ответа: {e!s}'
+        raise HTTPException(status_code=500, detail=error_msg) from e
 
 
 async def _stream_response(
@@ -299,11 +325,15 @@ async def _stream_response(
     temperature: float,
     max_tokens: int,
     request_id: str | None = None,
-):
+) -> AsyncGenerator[str, None]:
     """Генератор для потоковой отправки ответа."""
+    function_name = '_stream_response'
+    file_name = 'main.py'
     try:
         logger.info(
             '_stream_response_started',
+            function=function_name,
+            file=file_name,
             request_id=request_id,
             messages_count=len(messages),
             temperature=temperature,
@@ -312,7 +342,7 @@ async def _stream_response(
         
         # generate_chat_response - async функция, при stream=True она возвращает async генератор
         # await-им generate_chat_response(), чтобы получить async генератор
-        logger.info('calling_generate_chat_response', request_id=request_id)
+        logger.info('calling_generate_chat_response', function=function_name, file=file_name, request_id=request_id)
         try:
             response_gen = await model_handler.generate_chat_response(
                 messages=messages,
@@ -322,6 +352,8 @@ async def _stream_response(
             )
             logger.info(
                 'generate_chat_response_completed',
+                function=function_name,
+                file=file_name,
                 request_id=request_id,
                 response_received=True,
                 response_type=type(response_gen).__name__,
@@ -330,6 +362,8 @@ async def _stream_response(
         except Exception as e:
             logger.exception(
                 'generate_chat_response_failed',
+                function=function_name,
+                file=file_name,
                 request_id=request_id,
                 error=str(e),
                 error_type=type(e).__name__,
@@ -345,6 +379,8 @@ async def _stream_response(
         has_iter = hasattr(response_gen, '__iter__')
         logger.info(
             'stream_generator_received',
+            function=function_name,
+            file=file_name,
             request_id=request_id,
             response_type=response_type_name,
             has_aiter=has_aiter,
@@ -357,13 +393,15 @@ async def _stream_response(
             error_msg = f'Ожидался async генератор для streaming, получен {response_type_name}'
             logger.error(
                 'invalid_stream_generator',
+                function=function_name,
+                file=file_name,
                 request_id=request_id,
                 response_type=response_type_name,
                 has_aiter=has_aiter,
                 has_iter=has_iter,
             )
             # Fallback: используем синхронный запрос с буферизацией
-            logger.warning('using_fallback_sync_request', request_id=request_id)
+            logger.warning('using_fallback_sync_request', function=function_name, file=file_name, request_id=request_id)
             try:
                 sync_response = await model_handler.generate_chat_response(
                     messages=messages,
@@ -381,13 +419,13 @@ async def _stream_response(
                 yield 'data: [DONE]\n\n'
                 return
             except Exception as fallback_error:
-                logger.exception('fallback_sync_request_failed', request_id=request_id, error=str(fallback_error))
+                logger.exception('fallback_sync_request_failed', function=function_name, file=file_name, request_id=request_id, error=str(fallback_error))
                 import json
                 error_json = json.dumps({'error': f'Ошибка при fallback запросе: {fallback_error!s}'}, ensure_ascii=False)
                 yield f'data: {error_json}\n\n'
                 return
         
-        logger.info('starting_async_iteration', request_id=request_id)
+        logger.info('starting_async_iteration', function=function_name, file=file_name, request_id=request_id)
 
         chunks_count = 0
         async for chunk in response_gen:
@@ -400,19 +438,19 @@ async def _stream_response(
                 
                 # Логируем первые несколько чанков для диагностики
                 if chunks_count <= 3:
-                    logger.debug('chunk_yielded', request_id=request_id, chunk_number=chunks_count, chunk_length=len(chunk))
+                    logger.debug('chunk_yielded', function=function_name, file=file_name, request_id=request_id, chunk_number=chunks_count, chunk_length=len(chunk))
 
-        logger.info('streaming_completed', request_id=request_id, total_chunks=chunks_count)
+        logger.info('streaming_completed', function=function_name, file=file_name, request_id=request_id, total_chunks=chunks_count)
         yield 'data: [DONE]\n\n'
     except Exception as e:
-        logger.exception('streaming_failed', request_id=request_id, error=str(e), error_type=type(e).__name__)
+        logger.exception('streaming_failed', function=function_name, file=file_name, request_id=request_id, error=str(e), error_type=type(e).__name__)
         import json
         error_json = json.dumps({'error': f'Ошибка при потоковой генерации: {e!s}'}, ensure_ascii=False)
         yield f'data: {error_json}\n\n'
 
 
 @app.get('/api/health', response_model=HealthResponse)
-async def health():
+async def health() -> HealthResponse:
     """Проверка статуса сервиса и модели."""
     model_loaded = model_handler is not None and model_handler.is_loaded()
     model_info = model_handler.get_model_info() if model_handler else None
@@ -429,9 +467,11 @@ async def health():
 
 
 @app.post('/api/reset')
-async def reset():
+async def reset() -> dict[str, str]:
     """Сброс контекста диалога (заглушка для будущей реализации)."""
-    logger.info('context_reset_requested')
+    function_name = 'reset'
+    file_name = 'main.py'
+    logger.info('context_reset_requested', function=function_name, file=file_name)
     return {
         'status': 'ok',
         'message': 'Контекст сброшен (в текущей реализации контекст не сохраняется)',
