@@ -130,19 +130,11 @@ class ModelHandler:
         try:
             if stream:
                 logger.info('generate_chat_response_returning_stream', prompt_hash=prompt_hash)
-                # _generate_stream - это async генератор, вызов возвращает coroutine
-                # НО мы не можем await-ить его здесь, потому что это async генератор
-                # Вместо этого возвращаем coroutine напрямую, и вызывающий код должен await-ить его
-                stream_gen_coro = self._generate_stream(
+                # _generate_stream() возвращает async генератор напрямую (не coroutine)
+                # Возвращаем генератор напрямую
+                return self._generate_stream(
                     messages, system_prompt, temperature, max_tokens, prompt_hash, start_time
                 )
-                logger.info(
-                    'generate_chat_response_stream_gen_coro_created',
-                    prompt_hash=prompt_hash,
-                    coro_type=type(stream_gen_coro).__name__,
-                )
-                # Возвращаем coroutine, который при await вернет async генератор
-                return stream_gen_coro
             return await self._generate_sync(
                 messages, system_prompt, temperature, max_tokens, prompt_hash, start_time
             )

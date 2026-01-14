@@ -211,27 +211,18 @@ async def chat(request: ChatRequest):
 
     Поддерживает обычные и потоковые ответы.
     """
-    # Логируем САМОЕ ПЕРВОЕ - до всех проверок
     request_id = str(uuid.uuid4())
-    print(f'[DEBUG] CHAT_ENDPOINT_CALLED, request_id={request_id}')
-    try:
-        logger.info('CHAT_ENDPOINT_CALLED', request_id=request_id)
-    except Exception as e:
-        print(f'[DEBUG] ERROR LOGGING: {e}')
     
     # Логируем входящий запрос
-    try:
-        logger.info(
-            'chat_request_received',
-            request_id=request_id,
-            messages_count=len(request.messages) if request.messages else 0,
-            stream=request.stream,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            system_prompt_type=request.system_prompt_type,
-        )
-    except Exception as e:
-        print(f'ERROR LOGGING chat_request_received: {e}')
+    logger.info(
+        'chat_request_received',
+        request_id=request_id,
+        messages_count=len(request.messages) if request.messages else 0,
+        stream=request.stream,
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+        system_prompt_type=request.system_prompt_type,
+    )
     
     if model_handler is None:
         error_msg = 'Модель не загружена'
@@ -269,11 +260,9 @@ async def chat(request: ChatRequest):
             
             # _stream_response - это async генератор, передаем его напрямую
             # FastAPI StreamingResponse автоматически обработает async генератор
-            print(f'[DEBUG] Creating stream_gen, request_id={request_id}')
             stream_gen = _stream_response(
                 model_handler, messages_dict, request.temperature, request.max_tokens, request_id
             )
-            print(f'[DEBUG] stream_gen created, type={type(stream_gen).__name__}, has_aiter={hasattr(stream_gen, "__aiter__")}')
             
             # Логируем тип объекта перед передачей в StreamingResponse
             logger.info(
@@ -281,11 +270,8 @@ async def chat(request: ChatRequest):
                 request_id=request_id,
                 stream_gen_type=type(stream_gen).__name__,
                 has_aiter=hasattr(stream_gen, '__aiter__'),
-                has_iter=hasattr(stream_gen, '__iter__'),
-                is_coroutine=asyncio.iscoroutine(stream_gen),
             )
             
-            print(f'[DEBUG] Returning StreamingResponse, request_id={request_id}')
             return StreamingResponse(stream_gen, media_type='text/event-stream')
         response_text = await model_handler.generate_chat_response(
             messages=messages_dict,
@@ -315,9 +301,7 @@ async def _stream_response(
     request_id: str | None = None,
 ):
     """Генератор для потоковой отправки ответа."""
-    print(f'[DEBUG] _stream_response called, request_id={request_id}')
     try:
-        print(f'[DEBUG] _stream_response: logging start, request_id={request_id}')
         logger.info(
             '_stream_response_started',
             request_id=request_id,
@@ -325,28 +309,23 @@ async def _stream_response(
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        print(f'[DEBUG] _stream_response: logged start, request_id={request_id}')
         
-        # generate_chat_response - async функция, при stream=True она возвращает coroutine от async генератора
-        # Нужно await-ить coroutine, чтобы получить async генератор
+        # generate_chat_response - async функция, при stream=True она возвращает async генератор
+        # await-им generate_chat_response(), чтобы получить async генератор
         logger.info('calling_generate_chat_response', request_id=request_id)
         try:
-            # Вызываем generate_chat_response с await, чтобы получить coroutine от async генератора
-            response_gen_coro = await model_handler.generate_chat_response(
+            response_gen = await model_handler.generate_chat_response(
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True,
             )
-            logger.info('generate_chat_response_coro_received', request_id=request_id, coro_type=type(response_gen_coro).__name__)
-            
-            # await-им coroutine от async генератора, чтобы получить сам генератор
-            response_gen = await response_gen_coro
             logger.info(
                 'generate_chat_response_completed',
                 request_id=request_id,
                 response_received=True,
                 response_type=type(response_gen).__name__,
+                has_aiter=hasattr(response_gen, '__aiter__'),
             )
         except Exception as e:
             logger.exception(
@@ -383,10 +362,30 @@ async def _stream_response(
                 has_aiter=has_aiter,
                 has_iter=has_iter,
             )
-            import json
-            error_json = json.dumps({'error': error_msg}, ensure_ascii=False)
-            yield f'data: {error_json}\n\n'
-            return
+            # Fallback: используем синхронный запрос с буферизацией
+            logger.warning('using_fallback_sync_request', request_id=request_id)
+            try:
+                sync_response = await model_handler.generate_chat_response(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=False,
+                )
+                # Разбиваем ответ на чанки для имитации streaming
+                chunk_size = 10
+                for i in range(0, len(sync_response), chunk_size):
+                    chunk = sync_response[i:i + chunk_size]
+                    import json
+                    chunk_json = json.dumps({'content': chunk}, ensure_ascii=False)
+                    yield f'data: {chunk_json}\n\n'
+                yield 'data: [DONE]\n\n'
+                return
+            except Exception as fallback_error:
+                logger.exception('fallback_sync_request_failed', request_id=request_id, error=str(fallback_error))
+                import json
+                error_json = json.dumps({'error': f'Ошибка при fallback запросе: {fallback_error!s}'}, ensure_ascii=False)
+                yield f'data: {error_json}\n\n'
+                return
         
         logger.info('starting_async_iteration', request_id=request_id)
 

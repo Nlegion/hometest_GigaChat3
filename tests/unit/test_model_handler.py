@@ -67,33 +67,25 @@ async def test_generate_chat_response_stream(mock_model_handler, sample_single_m
     mock_model_handler._generate_stream = mock_generate_stream
 
     # generate_chat_response - async функция, которая возвращает async генератор
-    # Но так как она async, мы не можем просто вызвать её - нужно await'ить
-    # Но await'ить async генератор нельзя, поэтому просто проверяем, что метод вызывается
-    # и возвращает async генератор
-    response_gen_coro = mock_model_handler.generate_chat_response(
+    # await-им coroutine, чтобы получить async генератор
+    response_gen = await mock_model_handler.generate_chat_response(
         messages=sample_single_message,
         temperature=0.7,
         max_tokens=100,
         stream=True,
     )
 
-    # response_gen_coro - это coroutine, который при await вернет async генератор
-    # Но мы не можем await'ить его в тесте, так как это изменит логику
-    # Вместо этого просто проверяем, что _generate_stream вызывается правильно
-    # через прямой вызов
+    # response_gen - это async генератор, проверяем его
+    assert hasattr(response_gen, '__aiter__'), 'Должен быть async генератор'
+    
+    # Итерируемся по генератору
     chunks = []
-    async for chunk in mock_model_handler._generate_stream(
-        messages=sample_single_message,
-        system_prompt=None,
-        temperature=0.7,
-        max_tokens=100,
-        prompt_hash='test',
-        start_time=0.0,
-    ):
+    async for chunk in response_gen:
         chunks.append(chunk)
 
     assert len(chunks) > 0
     assert all(isinstance(chunk, str) for chunk in chunks)
+    assert ''.join(chunks) == 'Тестовый ответ'
 
 
 @pytest.mark.asyncio
